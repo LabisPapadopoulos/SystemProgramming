@@ -1,0 +1,3 @@
+#!/bin/bash
+gcc -ansi -Wall -g *.c -pthread
+

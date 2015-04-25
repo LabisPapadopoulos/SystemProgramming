@@ -1,0 +1,564 @@
+#!/bin/bash
+# http://www.tutorialspoint.com/unix/unix-regular-expressions.htm
+
+function exodos1 ()
+{
+	domain=$1
+	shift
+
+	#periexei tous xaraktires stous opoious tha xwrizetai ena string 
+	#otan xrisimopoieitai san pinakas. Dhladh me allagh grammhs ena
+	#string otan metatrepetai se pinaka, tha exei se kathe thesh tou
+	#pinaka mia oloklirh grammh anti gia mia mono lexh.
+	IFS='
+'
+
+	secondsNow=`date +%s`
+
+	#$*: gia ola ta orismata
+	for host in $*
+	do
+		echo $host:
+
+		#gia na kovei ton pinaka mono s' allagh grammhs to allo mixanima
+		#set, epeidh einai apomekrimeno kai trexei san entolh kai oxi san script
+		rsh $host.$domain set IFS='
+'
+		touch users_$$
+
+		for user in `rsh $host.$domain who`
+		do
+	        	userID=`echo $user | sed 's/^\([[:graph:]]\+\).*$/\1/'`
+			from=`echo $user | sed 's/^.*(\([[:graph:]]\+\))$/\1/'`
+			user=`rsh $host.$domain finger -mp $userID`
+			# name_surname=`echo $user | head -1 | sed 's/^.*Name:[[:space:]]\+\([[:graph:]]\+\)[[:space:]]\+\([[:graph:]]\+\).*/\2\t\1/'`
+			name=`echo $user | head -1 | sed 's/^.*Name:[[:space:]]\+\([[:graph:]]\+\)[[:space:]]\+\([[:graph:]]\+\).*/\1/'`
+			surname=`echo $user | head -1 | sed 's/^.*Name:[[:space:]]\+\([[:graph:]]\+\)[[:space:]]\+\([[:graph:]]\+\).*/\2/'`
+			time=`echo $user | head -3 | tail -1 | sed 's/.*On[[:space:]]\+since[[:space:]]\+\([[:alpha:]]\+[[:space:]]\+[[:alpha:]]\+[[:space:]]\+[[:digit:]]\+[[:space:]]\+[[:digit:]]\+:[[:digit:]]\+[[:space:]]\+[[:graph:]]\+\).*/\1/'`
+			seconds=`date -d "$time" +%s`
+        		diarkeia=$((($secondsNow - $seconds)/60))
+			diergasia=`rsh $host.$domain top -b -u $userID -n 1 | head -8 | tail -1`
+        		diergasia=`echo $diergasia | sed 's/^.*[[:space:]]\+\([[:graph:]]\+\)[[:space:]]\+$/\1/'`
+			
+			echo $surname $name $userID $diarkeia $diergasia $from >> users_$$
+			
+		done
+		awk '{  #an o xronos tis trexousas grammis einai megaluteros apo ton prohgoumeno 
+			#(pou einai apothikeumenos ston pinaka time) tote enhmerwnei ta upoloipa 
+			#stoixeia tou xristh kratwntas ws index to userID (3o pedio)
+
+			if(time[$3] < $4)
+			{
+				surname[$3] = $1;
+				firstname[$3] = $2;
+				time[$3] = $4;
+				process[$3] = $5;
+				host[$3] = $6;
+			}
+		}
+		END{
+			for(user in surname)
+				printf("%s %s %s %s %s %s\n", surname[user], firstname[user], user, time[user], process[user], host[user]);
+			
+		}' < users_$$ > users_$$.temp
+
+		rm users_$$
+
+		sort users_$$.temp | awk '{ printf("%-15s%-15s%-10s%8smin\t%-11s%-20s\n", $1, $2, $3, $4, $5, $6); }'
+		rm users_$$.temp
+		echo
+
+	done
+}
+
+#==============================================================================================================
+
+function exodos2 ()
+{
+	domain=$1
+
+	#xefwrtwnetai to 1o orisma pou exei diavasei kai arxizei na metraei apo
+	#to epomeno orisma
+        shift
+
+	IFS='
+'
+	uniqueUsers=()
+	i=1
+
+	#arxeio gia tin apothikeush twn dedomenwn eisodou tou gnuplot
+	#$$: pid tis diergasias pou trexei, se periptwsh pou trexoun polles
+	totalUsers=0
+
+	for host in $*
+	do
+		echo -n "Users on $host "
+
+		for user in `rsh $host.$domain who`
+		do
+			totalUsers=$((totalUsers + 1))
+
+			userID=`echo $user | sed 's/^\([[:graph:]]\+\).*$/\1/'`
+			echo -n "$userID "
+
+			found='false'
+
+			#anazhtaei an uparxei o xrisths ston pinaka me xrish flag
+			#@: gia na ginei iterate panw sta periexomena me tin seira
+			for uniqueUser in ${uniqueUsers[@]}
+			do
+				if [ "$uniqueUser" == "$userID" ]
+				then
+					found='true'
+					break
+				fi
+			done
+
+			#an den vrike ton xristh ton vazei mesa ston pinaka
+			if [ "$found" == 'false' ]
+			then
+				uniqueUsers[$i]=$userID
+				i=$((i + 1))
+			fi
+		done
+		echo
+	done
+					# $#: plithos twn orismatwn to opoio einai pleon to plithos twn mixanimatwn
+	fortos=`echo "scale=5; $totalUsers/$#" | bc`
+	time=`date +%H:%M:%S`
+	echo "$time $fortos" >> gnuplot_$$.data
+	#krataei se arxeio temp tis 20 teleutaies times
+	tail -20 gnuplot_$$.data > gnuplot_$$.temp
+	#metakinish tou arxeiou temp sto sto arxeio gnuplot
+	mv gnuplot_$$.temp gnuplot_$$.data
+	
+	#grafei se arxeio .ps         onoma tou arxeiou pou tha grapsei         zwgrafizei to gnuplot ta dedomena tou arxeiou xrhsimopoiwntas tin 1h stilh san etiketes-string
+										#ston x axona kai tin 2h san times ston y axona
+	echo "set term postscript; set output 'gnuplot_$$/gnuplot_$$_$time.ps'; plot 'gnuplot_$$.data' using 2:xticlabels(1) ti 'Average Users per Machine' with boxes" | gnuplot
+
+			# apo ton pinaka uniqueUsers me to @ pairnei oles tis times
+			# me to # metraei tis times autes
+	echo "-->> There are ${#uniqueUsers[@]} unique users on-line at this time."
+	echo "-->> On the averege: $fortos logged in per machine."
+}
+
+function run_exodos2 ()
+{
+	domain=$1
+	shift
+	
+	seconds=$1
+	shift
+	
+	#dimiourgeia arxeiou pou tha swzontai oi 20 teleutaies times
+	touch gnuplot_$$.data
+	#dimiourgia katalogou pou tha apothikeuontai ola ta arxeia
+	mkdir gnuplot_$$
+	#SINGINT: Ctrl+C, trap: molis lavei to ctrl+c kalei tin sunartish terminate_exodos2
+	trap terminate_exodos2 SIGINT
+	while [ 1 ]
+	do
+			       #$*: ola ta upoloipa orismata pou exoun minei (meta ta shift, dhladh h lista me ta mixanimata)
+		exodos2 $domain $*
+		sleep $seconds
+	done
+}
+
+
+function terminate_exodos2 ()
+{
+	tar cf ~/gnuplot_$$.tar gnuplot_$$
+	rm -r gnuplot_$$.data gnuplot_$$
+	rm -rf machines_$$
+	exit 115
+}
+
+#==============================================================================================================
+
+function addEntryPoint () {
+	userID=$1
+	entryPoint=$2
+	cp reports_$$/users_entryPoint_$$ reports_$$/users_entryPoint_$$.temp
+		awk "   {
+			# entries: pinakas pou metraei fores eisodou.
+			# xwrismos tou 1ou pediou (userID) apo to 2o (entryPoint) me ton eidiko xaraktira SUBSEP
+			# gia kathe grammh (sundiasmo userID kai entryPoint) apothikeuei ston pinaka entries to 3o pedio (fores eisdoxhs)
+			entries[\$1 SUBSEP \$2] = \$3;
+		}
+		
+		END {
+			# Gia ton xristh userID auxanei tis fores pou bike apo to shmeio eisdoxhs entryPoint kata 1.
+			# Oi userID kai entryPoint einai metavlites tou bash kai oxi tou awk, gi' auto benoun se dipla eisagwgika.
+			entries[\"$userID\" SUBSEP \"$entryPoint\"] += 1;
+			for (entry in entries) {
+				# Xwrizei olo to entry (kleidi pinaka, dhl 1o pedio SUBSEP 2o pedio) xrisimopoiwntas ton xaraktira SUBSEP kai
+				# apothikeuei tis epimerous times ston pinaka entryFields.
+				split(entry, entryFields, SUBSEP);
+				user = entryFields[1];
+				entryPoint = entryFields[2];
+				printf(\"%-10s\t%-20s\t%5d\n\", user, entryPoint, entries[entry]);
+			}
+		}" > reports_$$/users_entryPoint_$$ < reports_$$/users_entryPoint_$$.temp
+}
+
+function addPopularDay () 
+{
+	date=$1
+	diarkeiaSession=$2
+	cp reports_$$/popular_days_$$ reports_$$/popular_days_$$.temp
+
+	#Eisodos tou awk einai to arxeio reports_$$/popular_days_$$.temp
+	awk "{
+		#Koino kleidh twn duo pinakwn einai to 3o pedio (h hmerominia)
+		#countSessions: Pinakas pou apothikeuei gia kathe hmerominia to plithos twn sessions pou eginan tote
+		countSessions[\$3]=\$1;
+		#maxDurationSession: Pinakas pou apothikeuei gia kathe hmerominia tin megisth diarkeia session pou egine
+		#ekeinh tin hmera
+		maxDurationSession[\$3]=\$2;
+	}
+	END {
+		countSessions[\"$date\"] += 1;
+		#An h diarkeiaSession einai megalhterh apo tin mexri twra megisth diarkeia session tis sugkekrimenhs hmerominias
+		#tote tin antikathista me ti diarkeiaSession
+		if( $diarkeiaSession > maxDurationSession[\"$date\"] )
+			maxDurationSession[\"$date\"]=$diarkeiaSession;
+
+		for(date in countSessions)
+			printf(\"%-5d\t%-10d\t%-15s\n\", countSessions[date], maxDurationSession[date], date );
+		
+
+	}" > reports_$$/popular_days_$$ < reports_$$/popular_days_$$.temp
+}
+
+function exodos3()
+{
+
+	domain=$1
+	shift
+
+	IFS='
+'
+
+	now=`date +%s`
+
+	#dimiourgia katalogou anaforwn
+	mkdir reports_$$
+
+	#arxeio me xrono ergasias xristwn
+	touch reports_$$/users_time_$$
+
+	#dimiourgia arxeiou gia reboot kai down
+	touch reports_$$/reboot_down_$$
+
+	#dimiourgia arxeiou gia shmeia eisdoxhs xristwn
+	touch reports_$$/users_entryPoint_$$
+
+	#dimiourgeia arxeiou gia tin apothikeush twn dhmofilwn merwn
+	touch reports_$$/popular_days_$$
+	
+	
+	for host in $*
+	do
+
+		countReboot=0
+		countDown=0
+		echo "$host: " >> reports_$$/reboot_down_$$
+
+				#ekteleitai h last stin lista me ta mixanimata pou tha dothoun
+		for user in `rsh $host.$domain last`
+		do
+			userID=`echo $user | sed 's/^\([[:graph:]]\+\).*$/\1/'`
+	
+			#diaforetikes periptwseis minimatwn			#true: san boolean
+			stillLoggedIn=`echo $user | sed -n 's/^.*still logged in.*$/true/p'`
+			goneNoLogout=`echo $user | sed -n 's/^.*gone - no logout.*$/true/p'`
+			wtmpBegins=`echo $user | sed -n 's/^wtmp begins.*$/true/p'`
+			reboot=`echo $user | sed -n 's/^reboot.*$/true/p'`
+			down=`echo $user | sed -n 's/^.*down.*$/true/p'`
+	
+			if [ -n "$wtmpBegins" ]
+			then
+				continue
+	
+			elif [ -n "$reboot" ]
+			then
+				countReboot=$((countReboot+1))
+				dateReboot=`echo $user | sed 's/^\([[:graph:]]\+[[:space:]]\+\)\{4\}\(\([[:alpha:]]\{3\}[[:space:]]\+\)\{2\}[[:digit:]]\+[[:space:]][[:digit:]]\{2\}:[[:digit:]]\{2\}\).*$/\2/'`
+
+				echo "Reboot: $dateReboot" >> reports_$$/reboot_down_$$
+
+			elif [ -n "$down" ]
+			then
+				countDown=$((countDown+1))
+				dateDown=`echo $user | sed 's/^\([[:graph:]]\+[[:space:]]\+\)\{3\}\(\([[:alpha:]]\{3\}[[:space:]]\+\)\{2\}[[:digit:]]\+[[:space:]][[:digit:]]\{2\}:[[:digit:]]\{2\}\).*$/\2/'`
+				#shmeio eisdoxhs
+				entryPoint=`echo $user | sed 's/^\([[:graph:]]\+[[:space:]]\+\)\{2\}\([[:graph:]]\+\).*$/\2/'`
+		
+				#dateDown se timestamp
+				timeStampDown=`date -d $dateDown +%s`
+				dayDown=`date -d $dateDown +%D`	
+	
+				#lt: less than			10 hmeres se deuterolepta
+				if [ $(($now - $timeStampDown)) -lt $((10*24*60*60)) ]
+				then
+
+					days=`echo $user | sed -n 's/^.*[[:space:]]\+(\(\([[:digit:]]*\)+\)\?\([[:digit:]]\{2\}\):\([[:digit:]]\{2\}\))[[:space:]]*$/\2/p'`
+	                       		hours=`echo $user | sed -n 's/^.*[[:space:]]\+(\(\([[:digit:]]*\)+\)\?\([[:digit:]]\{2\}\):\([[:digit:]]\{2\}\))[[:space:]]*$/\3/p'`
+        	                	minutes=`echo $user | sed -n 's/^.*[[:space:]]\+(\(\([[:digit:]]*\)+\)\?\([[:digit:]]\{2\}\):\([[:digit:]]\{2\}\))[[:space:]]*$/\4/p'`
+
+                	        	#z: size 0
+                        		if [ -z "$days" ]
+                        		then
+                                		days=0
+                        		fi
+
+                       			minutes=`echo "$minutes+$hours*60+$days*24*60" | bc`
+					addPopularDay $dayDown $minutes
+				fi
+
+				echo "Down: $dateDown" >> reports_$$/reboot_down_$$
+
+				addEntryPoint $userID $entryPoint
+
+			elif [ -n "$goneNoLogout" ]
+			then
+				minutes=0
+				entryPoint=`echo $user | sed 's/^\([[:graph:]]\+[[:space:]]\+\)\{2\}\([[:graph:]]\+\).*$/\2/'`
+				dateGoneNoLogout=`echo $user | sed 's/^\([[:graph:]]\+[[:space:]]\+\)\{3\}\(\([[:alpha:]]\{3\}[[:space:]]\+\)\{2\}[[:digit:]]\+[[:space:]][[:digit:]]\{2\}:[[:digit:]]\{2\}\).*$/\2/'`
+				dayGoneNoLogout=`date -d $dateGoneNoLogout +%D`
+				timestampGoneNoLogout=`date -d $dateGoneNoLogout +%s`
+			
+				addEntryPoint $userID $entryPoint
+
+				#lt: less than                  10 hmeres se deuterolepta
+                                if [ $(($now - $timestampGoneNoLogout)) -lt $((10*24*60*60)) ]
+                                then
+					addPopularDay $dayGoneNoLogout $minutes
+				fi
+			elif [ -n "$stillLoggedIn" ]
+			then
+				userID=`echo $user | sed 's/^\([[:graph:]]\+\).*$/\1/'`
+				loggedInTime=`echo $user | sed 's/^\([[:graph:]]\+[[:space:]]\+\)\{3\}\(\([[:alpha:]]\{3\}[[:space:]]\+\)\{2\}[[:digit:]]\+[[:space:]][[:digit:]]\{2\}:[[:digit:]]\{2\}\).*$/\2/'`
+				date1970=`date -d "$loggedInTime" +%s`
+				#sunolikos xronos se lepta
+				minutes=`echo "($now-$date1970)/60" | bc`
+				entryPoint=`echo $user | sed 's/^\([[:graph:]]\+[[:space:]]\+\)\{2\}\([[:graph:]]\+\).*$/\2/'`
+
+				#Antigrafei to idio to arxeio s' ena temp
+				cp reports_$$/users_time_$$ reports_$$/users_time_$$.temp
+
+				#To awk xrisimopoiei to .temp san eisodo epeidh otan paei na grapsei tin exodo tou sto idio arxeio (arxiko) tha svisei ta palia periexomena me apotelesma na min exei
+				#allh eisodo na sunexisei
+																	# stelnei sto arxeio		diavazei apo arxeio
+				awk "{time[\$2] = \$1 } END {time[\"$userID\"] += $minutes; for (user in time ) print time[user] \"\t\" user; }" > reports_$$/users_time_$$ < reports_$$/users_time_$$.temp
+			
+				addEntryPoint $userID $entryPoint
+
+				#lt: less than                  10 hmeres se deuterolepta
+                                if [ $(($now - $date1970)) -lt $((10*24*60*60)) ]
+                                then
+					loggedInTime=`date -d $loggedInTime +%D`
+					addPopularDay $loggedInTime $minutes
+				fi
+
+			else
+				userID=`echo $user | sed 's/^\([[:graph:]]\+\).*$/\1/'`
+				days=`echo $user | sed -n 's/^.*[[:space:]]\+(\(\([[:digit:]]*\)+\)\?\([[:digit:]]\{2\}\):\([[:digit:]]\{2\}\))[[:space:]]*$/\2/p'`
+				hours=`echo $user | sed -n 's/^.*[[:space:]]\+(\(\([[:digit:]]*\)+\)\?\([[:digit:]]\{2\}\):\([[:digit:]]\{2\}\))[[:space:]]*$/\3/p'`
+				minutes=`echo $user | sed -n 's/^.*[[:space:]]\+(\(\([[:digit:]]*\)+\)\?\([[:digit:]]\{2\}\):\([[:digit:]]\{2\}\))[[:space:]]*$/\4/p'`
+				#z: size 0
+				if [ -z "$days" ]
+				then
+					days=0
+				fi
+				minutes=`echo "$minutes+$hours*60+$days*24*60" | bc`
+				entryPoint=`echo $user | sed 's/^\([[:graph:]]\+[[:space:]]\+\)\{2\}\([[:graph:]]\+\).*$/\2/'`
+
+				cp reports_$$/users_time_$$ reports_$$/users_time_$$.temp
+
+				#prosthetei xrono sto sunoliko xrono pou exei dapanisei o xrhsths sto susthma, ergazomenos
+				awk "{time[\$2] = \$1 } END {time[\"$userID\"] += $minutes; for (user in time ) print time[user] \"\t\" user; }" > reports_$$/users_time_$$ < reports_$$/users_time_$$.temp
+			
+				addEntryPoint $userID $entryPoint
+			
+				loggedInTime=`echo $user | sed 's/^\([[:graph:]]\+[[:space:]]\+\)\{3\}\(\([[:alpha:]]\{3\}[[:space:]]\+\)\{2\}[[:digit:]]\+[[:space:]][[:digit:]]\{2\}:[[:digit:]]\{2\}\).*$/\2/'`
+				#metatroph tou loggedInTime se timestamp
+				loggedInTimestamp=`date -d $loggedInTime +%s`
+				loggedInTime=`date -d $loggedInTime +%D`
+				#lt: less than                  10 hmeres se deuterolepta
+                                if [ $(($now - $loggedInTimestamp)) -lt $((10*24*60*60)) ]
+                                then
+					addPopularDay $loggedInTime $minutes
+				fi
+			fi
+
+		done
+
+	done
+
+	#-n: arithmitikh taxinomish
+	#-r: fthinousa taxinomish
+	sort -n -r reports_$$/users_time_$$ | head -100 > reports_$$/users_time_$$.temp
+	mv reports_$$/users_time_$$.temp reports_$$/users_time_$$
+
+
+	echo "Number of Reboots: $countReboot" >> reports_$$/reboot_down_$$
+        echo "Number of Downs: $countDown" >> reports_$$/reboot_down_$$
+
+	sort reports_$$/users_entryPoint_$$ > reports_$$/users_entryPoint_$$.temp
+	mv reports_$$/users_entryPoint_$$.temp reports_$$/users_entryPoint_$$
+
+
+	sort -n -r reports_$$/popular_days_$$ | head -5 > reports_$$/popular_days_$$.temp
+	mv reports_$$/popular_days_$$.temp reports_$$/popular_days_$$
+
+	echo "set term postscript; set output 'reports_$$/gnuplot_$$.ps'; plot 'reports_$$/popular_days_$$' using 2:1:xticlabels(3) ti 'Dimofileis meres (Ipsos: plithos syndesewn, Platos: megisth diarkeia syndeshs)' with boxes" | gnuplot
+
+	rm -rf reports_$$/popular_days_$$
+	
+	tar cf reports_$$.tar reports_$$/
+
+	base64 reports_$$.tar |  mailx -s 'Deigma exodou3' -t `whoami`@$domain
+	rm -rf reports_$$/
+
+	#rm -rf reports_$$.tar
+}
+
+#==============================================================================================================
+
+mode=""
+domainName=""
+time=""
+
+touch machines_$$
+
+for arg in $*
+do
+	case $arg in
+	'-s')
+		if [ "$mode" == "" ]
+		then
+			mode="exodos1"
+		else
+			echo "Xrisimopoihse mono ena apo ta -s -c -st"
+			exit -1
+		fi
+		shift
+		;;
+	'-c')
+		if [ "$mode" == "" ]
+                then
+                        mode="exodos2"
+                else
+                        echo "Xrisimopoihse mono ena apo ta -s -c -st"
+                        exit -1
+                fi
+		shift
+		;;
+	'-st')
+		if [ "$mode" == "" ]
+                then
+                        mode="exodos3"
+                else
+                        echo "Xrisimopoihse mono ena apo ta -s -c -st"
+                        exit -1
+                fi
+		shift
+		;;
+	'-d')
+		#den theloume to -d alla to epomeno orisma
+		shift
+		domainName=$1
+		shift
+		;;
+	'-l')
+		if [ "$hostApoLista" == ""  ] #den exei apofasisei akoma gia eisodo mixanwn
+                then
+			hostApoLista=1 #eisodos mixanwn apo lista
+		else
+			echo "Xrisimopoihse mono ena apo ta -l -f"
+                        exit -1
+		fi
+
+		while [ 1 ]
+		do
+			shift
+			#-o: || -> OR
+			#Fortwnei sto arxeio tis mixanes oso ta orismata einai diaforetika apo ta gnwsta flags
+			if [ "$1" == "" -o "$1" == "-d" -o "$1" == "-l" -o "$1" == "-f" -o "$1" == "-s" -o "$1" == "-c" -o "$1" == "-st" -o "$1" == "-t" ]
+			then
+				break
+			fi
+			echo $1 >> machines_$$
+		done
+		
+		;;
+	'-f')
+		if [ "$hostApoLista" == ""  ] #den exei apofasisei akoma gia eisodo mixanwn
+		then
+			hostApoLista=0 #eisodos mixanwn apo arxeio
+		else
+			echo "Xrisimopoihse mono ena apo ta -l -f"
+			exit -1
+		fi
+
+		shift
+		cp $1 machines_$$
+		shift
+		;;
+	'-t')
+		shift
+		time="$1"
+		shift
+		;;
+	esac
+	#afou diavastike ena orisma to prospername kai pame sto epomeno
+#	shift
+done
+
+if [ "$mode" == "" ]
+then
+	echo "Prepei na xrisimopoihseis ena apo ta -s -c -st"
+	exit -1
+fi
+
+if [ "$domainName" == "" ]
+then
+	echo "Prepei na dwseis kai domain name!"
+	exit -1
+fi
+
+if [ "$hostApoLista" == ""  ]
+then
+	#Periptwsh pou o xrisths den exei dwsei -l -f, opote to prokathorismeno mixanima
+	#einai to trexon (hostname) kai apothikeuetai sto arxeio machines_$$
+	hostname > machines_$$
+fi
+
+if [ "$mode" == "exodos2" -a "$time" == "" ]
+then
+	echo "To -c thelei panta kai -t"
+	exit -1
+elif [ "$mode" != "exodos2" -a "$time" != "" ]
+then
+	echo "To -t epitrepetai mono me -c"
+	exit -1
+fi
+
+case $mode in
+'exodos1')
+	#klish sunartish exodos1 me to domainName kai ypolupa orismata tin
+	#ektupwsh tou taxinomimenou arxeiou 
+	exodos1 $domainName `sort machines_$$`
+	;;
+'exodos2')
+	run_exodos2 $domainName $time `sort machines_$$`
+	;;
+'exodos3')
+	exodos3 $domainName `sort machines_$$`
+	;;
+esac
+
+rm machines_$$
+
+
